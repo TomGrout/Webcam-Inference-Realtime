@@ -1,36 +1,90 @@
-import gradio as gr
-from fastrtc import WebRTC
-#from get_cams import get_working_cameras
-import get_cams
-import dual_cam_mqtt
+#!/usr/bin/env python3
+# main.py
 
-css = """.my-group {max-width: 600px !important; max-height: 600px !important;}
-         .my-column {display: flex !important; justify-content: center !important; align-items: center !important;}"""
+import cv2
+import queue
+import threading
+import config
+from mqtt_handler import init_mqtt
+from camera_utils import get_os_camera_backend, discover_cameras
+from inference_worker import camera_stream_worker
 
-with gr.Blocks(css=css) as demo:
-    gr.HTML(
-        """
-        <h1 style='text-align: center'>
-        YOLOv10 Webcam Stream (Powered by WebRTC ⚡️)
-        </h1>
-        """
-    )
-    with gr.Column(elem_classes=["my-column"]):
-        with gr.Group(elem_classes=["my-group"]):
-            image = WebRTC(label="Stream", rtc_configuration=rtc_configuration)
-            conf_threshold = gr.Slider(
-                label="Confidence Threshold",
-                minimum=0.0,
-                maximum=1.0,
-                step=0.05,
-                value=0.30,
-            )
+def main():
+    # 1. Initialize Network / MQTT
+    mqtt_client = init_mqtt()
 
-        image.stream(
-            fn=detection, inputs=[image, conf_threshold], outputs=[image], time_limit=10
+    # 2. Hardware Detection (OS-Specific)
+    backend = get_os_camera_backend()
+    active_indices = discover_cameras(backend, expected_count=config.EXPECTED_CAMS)
+
+    if len(active_indices) < config.EXPECTED_CAMS:
+        print(f"[WARN] Found {len(active_indices)} camera(s), expected {config.EXPECTED_CAMS}. Continuing with detected devices.")
+
+    # 3. Setup Streams and Threading Queues
+    cam_configs = []
+    display_queues = {}
+    stop_event = threading.Event()
+
+    for i, idx in enumerate(active_indices):
+        if i < len(config.LOCATION_NAMES):
+            name = config.LOCATION_NAMES[i]
+            cam_configs.append({"index": idx, "name": name})
+            display_queues[name] = queue.Queue(maxsize=1)
+
+    # 4. Launch Worker Threads
+    threads = []
+    for cfg in cam_configs:
+        t = threading.Thread(
+            target=camera_stream_worker,
+            args=(
+                cfg["index"],
+                cfg["name"],
+                backend,
+                display_queues[cfg["name"]],
+                stop_event,
+                mqtt_client
+            ),
+            daemon=True
         )
+        t.start()
+        threads.append(t)
+
+    print("\n[INFO] Feeds running. Press 'q' in any window to exit.\n")
+
+    # 5. Main Thread GUI Event Loop (Required for Debian, Linux X11/Wayland & Windows)
+    try:
+        while True:
+            for cfg in cam_configs:
+                name = cfg["name"]
+                q = display_queues[name]
+                if not q.empty():
+                    frame = q.get()
+                    cv2.imshow(f"Feed: {name}", frame)
+
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                print("[INFO] Exit key pressed.")
+                break
+
+    except KeyboardInterrupt:
+        print("\n[INFO] KeyboardInterrupt received.")
+    finally:
+        # 6. Graceful Cleanup
+        print("[INFO] Cleaning up resources...")
+        stop_event.set()
+
+        for t in threads:
+            t.join(timeout=2.0)
+
+        cv2.destroyAllWindows()
+
+        if mqtt_client:
+            try:
+                mqtt_client.loop_stop()
+                mqtt_client.disconnect()
+            except Exception:
+                pass
+
+        print("[INFO] System shutdown complete.")
 
 if __name__ == "__main__":
-    
-    print("hi")
-    
+    main()
