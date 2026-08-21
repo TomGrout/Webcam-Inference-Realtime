@@ -1,7 +1,8 @@
 # config.py
 
-#MQTT Settings  
-MQTT_BROKER = "broker.emqx.io"
+# MQTT Settings  
+# MQTT_PUBLIC_BROKER = "broker.emqx.io"
+MQTT_BROKER = "127.0.0.1"
 MQTT_PORT = 1883
 MQTT_TOPIC_PREFIX = "dalby/traffic"
 
@@ -17,7 +18,8 @@ TARGET_CLASSES = {
     2: "car",
     3: "motorcycle",
     5: "bus",
-    7: "truck"
+    7: "truck",
+    99: "test"
 }
 
 # Camera & Village   

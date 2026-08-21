@@ -21,6 +21,7 @@ def init_mqtt():
 
 def publish_detections(client, stream_name: str, fps: float, events: list, timestamp: float, totals: dict = None):
     if not client or not events:
+        print("Returning")
         return
 
     payload = {
@@ -34,5 +35,6 @@ def publish_detections(client, stream_name: str, fps: float, events: list, times
     topic = f"{config.MQTT_TOPIC_PREFIX}/{stream_name}"
     try:
         client.publish(topic, json.dumps(payload))
+        #print("Dumped")
     except Exception as e:
         print(f"[WARN] Failed to publish MQTT message: {e}")
